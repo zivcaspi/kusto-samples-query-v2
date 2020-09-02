@@ -1,0 +1,1 @@
+# kusto-samples-query-v2

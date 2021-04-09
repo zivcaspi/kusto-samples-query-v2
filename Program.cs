@@ -20,7 +20,10 @@ namespace kusto_samples_query_v2
         {
             try
             {
-                MainImpl();
+                var arguments = new Arguments();
+                CommandLineArgsParser.Parse(args, arguments, autoHelp: true);
+
+                MainImpl(arguments);
             }
             catch (Exception ex)
             {
@@ -28,7 +31,7 @@ namespace kusto_samples_query_v2
             }
         }
 
-        static void MainImpl()
+        static void MainImpl(Arguments arguments)
         {
             // 1. Create a connection string to a cluster/database with AAD user authentication
             var cluster = "https://help.kusto.windows.net/";
@@ -47,6 +50,12 @@ namespace kusto_samples_query_v2
                 {
                     ClientRequestId = "kusto_samples_query_v2;" + Guid.NewGuid().ToString()
                 };
+
+                if (arguments.ProgressiveMode)
+                {
+                    properties.SetOption(ClientRequestProperties.OptionResultsProgressiveEnabled, true);
+                }
+
                 var queryTask = queryProvider.ExecuteQueryV2Async(database, query, properties);
 
                 // 4. Parse and print the results of the query
@@ -80,33 +89,53 @@ namespace kusto_samples_query_v2
                     {
                         // This is the first frame we'll get back
                         var frameex = frame as ProgressiveDataSetHeaderFrame;
-                        Console.WriteLine($"DataSetHeader: Version={frameex.Version}");
+                        var banner = $"[{frameNum}] DataSet/HeaderFrame: Version={frameex.Version}, IsProgressive={frameex.IsProgressive}";
+                        Console.WriteLine(banner);
                         Console.WriteLine();
                     }
                     break;
 
                 case FrameType.TableHeader:
-                    // If progressive results are enabled, this is a one-time header
-                    // appearing before each data table.
-                    // In this example progressive results are not used.
+                    // (Progressive mode only)
+                    // This frame appears once for each table, before the table's data
+                    // is reported.
+                    {
+                        var frameex = frame as ProgressiveDataSetDataTableSchemaFrame;
+                        var banner = $"[{frameNum}] DataTable/SchemaFrame: TableId={frameex.TableId}, TableName={frameex.TableName}, TableKind={frameex.TableKind}";
+                        WriteSchema(banner, frameex.TableSchema);
+                    }
                     break;
 
                 case FrameType.TableFragment:
-                    // If progressive results are enabled, this is a frame that provides
-                    // parts of the table's data.
-                    // In this example progressive results are not used.
+                    // (Progressive mode only)
+                    // This frame provides one part of the table's data
+                    {
+                        var frameex = frame as ProgressiveDataSetDataTableFragmentFrame;
+                        var banner = $"[{frameNum}] DataTable/FragmentFrame: TableId={frameex.TableId}, FieldCount={frameex.FieldCount}, FrameSubType={frameex.FrameSubType}";
+                        WriteProgressiveResults(banner, frameex);
+                    }
                     break;
 
                 case FrameType.TableCompletion:
-                    // If progressive results are enabled, this is a frame that provides
-                    // parts of the table's data.
-                    // In this example progressive results are not used.
+                    // (Progressive mode only)
+                    // This frame announces the completion of a table (no more data in it).
+                    {
+                        var frameex = frame as ProgressiveDataSetTableCompletionFrame;
+                        var banner = $"[{frameNum}] DataTable/TableCompletionFrame: TableId={frameex.TableId}, RowCount={frameex.RowCount}";
+                        Console.WriteLine(banner);
+                        Console.WriteLine();
+                    }
                     break;
 
                 case FrameType.TableProgress:
-                    // If progressive results are enabled, this is a frame that provides
-                    // an indication for how much progress was made in returning results.
-                    // In this example progressive results are not used.
+                    // (Progressive mode only)
+                    // This frame appears periodically to provide a progress estimateion.
+                    {
+                        var frameex = frame as ProgressiveDataSetTableProgressFrame;
+                        var banner = $"[{frameNum}] DataTable/TableProgressFrame: TableId={frameex.TableId}, TableProgress={frameex.TableProgress}";
+                        Console.WriteLine(banner);
+                        Console.WriteLine();
+                    }
                     break;
 
                 case FrameType.DataTable:
@@ -118,8 +147,7 @@ namespace kusto_samples_query_v2
                         // Note that we can't skip processing the data -- we must consume it.
 
                         var frameex = frame as ProgressiveDataSetDataTableFrame;
-                        tableKind = frameex.TableKind;
-                        var banner = $"[{frameNum}] DataTable(DataTableFrame): TableId={frameex.TableId}, TableName={frameex.TableName}, TableKind={frameex.TableKind}";
+                        var banner = $"[{frameNum}] DataTable/DataTableFrame: TableId={frameex.TableId}, TableName={frameex.TableName}, TableKind={frameex.TableKind}";
                         WriteResults(banner, frameex.TableData);
                     }
                     break;
@@ -131,7 +159,9 @@ namespace kusto_samples_query_v2
                         // Whether there were any errors, whether it got cancelled mid-stream,
                         // and what exceptions were raised if either is true.
                         var frameex = frame as ProgressiveDataSetCompletionFrame;
-                        Console.WriteLine($"[{frameNum}] DataSetCompletion(CompletionFrame): HasErrors={frameex.HasErrors}, Cancelled={frameex.Cancelled}, Exception={ExtendedString.SafeToString(frameex.Exception)}");
+                        var banner = $"[{frameNum}] DataSet/CompletionFrame: HasErrors={frameex.HasErrors}, Cancelled={frameex.Cancelled}, Exception={ExtendedString.SafeToString(frameex.Exception)}";
+                        Console.WriteLine(banner);
+                        Console.WriteLine();
                     }
                     break;
 
@@ -152,5 +182,55 @@ namespace kusto_samples_query_v2
                 includeHeader: true);
             Console.WriteLine(writer.ToString());
         } // WriteResults
+
+        static void WriteProgressiveResults(string banner, ProgressiveDataSetDataTableFragmentFrame frameex)
+        {
+            Console.WriteLine(banner);
+            var record = new object[frameex.FieldCount];
+            var first = true;
+            while (frameex.GetNextRecord(record))
+            {
+                foreach (var item in record)
+                {
+                    if (first)
+                    {
+                        first = false;
+                    }
+                    else
+                    {
+                        Console.Write(",");
+                    }
+                    if (item == null)
+                    {
+                        Console.Write("##null");
+                    }
+                    else
+                    {
+                        Console.Write(item.ToString());
+                    }
+                }
+                Console.WriteLine();
+            }
+            Console.WriteLine();
+        }
+
+        static void WriteSchema(string banner, DataTable schema)
+        {
+            var writer = new System.IO.StringWriter();
+            schema.CreateDataReader().WriteAsText(banner, true, writer,
+                firstOnly: false,
+                markdown: false,
+                includeHeader: true
+                // TODO: , hideResultSetBanner: true
+                );
+            Console.WriteLine(writer.ToString());
+        } // WriteSchema
+    }
+
+    [CommandLineArgs]
+    class Arguments
+    {
+        [CommandLineArg("progressive", "If true, enabled receiving results in progressive mode")]
+        public bool ProgressiveMode = false;
     }
 }

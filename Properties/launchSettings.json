@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "kusto-samples-query-v2": {
+      "commandName": "Project",
+      "commandLineArgs": "-progressive"
+    }
+  }
+}

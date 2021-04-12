@@ -187,9 +187,9 @@ namespace kusto_samples_query_v2
         {
             Console.WriteLine(banner);
             var record = new object[frameex.FieldCount];
-            var first = true;
             while (frameex.GetNextRecord(record))
             {
+                var first = true;
                 foreach (var item in record)
                 {
                     if (first)

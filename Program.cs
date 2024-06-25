@@ -36,10 +36,11 @@ namespace kusto_samples_query_v2
             // 1. Create a connection string to a cluster/database with AAD user authentication
             var cluster = "https://help.kusto.windows.net/";
             var database = "Samples";
+            var tokenCredential = new Azure.Identity.DefaultAzureCredential();
             var kcsb = new KustoConnectionStringBuilder(cluster, database)
-            {
-                FederatedSecurity = true
-            };
+                // Uncomment the next line to support both interactive and managed-identity scenarios
+                // .WithAadAzureTokenCredentialsAuthentication(tokenCredential)
+                ;
 
             // 2. Connect to the Kusto query endpoint and create a query provider
             using (var queryProvider = KustoClientFactory.CreateCslQueryProvider(kcsb))
